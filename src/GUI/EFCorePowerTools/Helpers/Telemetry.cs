@@ -1,9 +1,10 @@
-﻿using System;
-using EnvDTE;
+﻿using EnvDTE;
 using EnvDTE80;
 using Microsoft.ApplicationInsights;
+using Microsoft.VisualStudio.Shell;
+using System;
 
-namespace ErikEJ.SqlCeToolbox.Helpers
+namespace EFCorePowerTools.Helpers
 {
     /// <summary>
     /// Reports anonymous usage through ApplicationInsights
@@ -18,6 +19,8 @@ namespace ErikEJ.SqlCeToolbox.Helpers
         /// </summary>
         public static void Initialize(DTE2 dte, string version, string vsVersion, string telemetryKey)
         {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
             if (_telemetry != null)
                 return;
 
@@ -44,7 +47,7 @@ namespace ErikEJ.SqlCeToolbox.Helpers
 #if !DEBUG
             if (Enabled)
             {
-                _telemetry.TrackEvent(key);
+                //_telemetry.TrackEvent(key);
             }
 #endif
         }
@@ -54,7 +57,7 @@ namespace ErikEJ.SqlCeToolbox.Helpers
 #if !DEBUG
             if (Enabled)
             {
-                _telemetry.TrackPageView(key);
+                //_telemetry.TrackPageView(key);
             }
 #endif
         }
@@ -66,7 +69,6 @@ namespace ErikEJ.SqlCeToolbox.Helpers
             if (Enabled)
             {
                 var telex = new Microsoft.ApplicationInsights.DataContracts.ExceptionTelemetry(ex);
-                telex.HandledAt = Microsoft.ApplicationInsights.DataContracts.ExceptionHandledAt.UserCode;
                 _telemetry.TrackException(telex);
             }
 #endif

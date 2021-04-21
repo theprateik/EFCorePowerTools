@@ -1,6 +1,7 @@
-﻿using EnvDTE;
-using ErikEJ.SqlCeToolbox.Helpers;
-using System;
+﻿using EFCorePowerTools.Helpers;
+using EFCorePowerTools.Locales;
+using EnvDTE;
+using Microsoft.VisualStudio.Shell;
 using System.IO;
 using System.Reflection;
 using System.Text;
@@ -16,12 +17,14 @@ namespace EFCorePowerTools.Handlers
             _package = package;
         }
 
-        public async void InstallDgmlNuget(Project project)
+        public async System.Threading.Tasks.Task InstallDgmlNugetAsync(Project project)
         {
-            _package.Dte2.StatusBar.Text = "Installing DbContext Dgml extension package";
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            _package.Dte2.StatusBar.Text = DgmlLocale.InstallingPackage;
             var nuGetHelper = new NuGetHelper();
             await nuGetHelper.InstallPackageAsync("ErikEJ.EntityFrameworkCore.DgmlBuilder", project);
-            _package.Dte2.StatusBar.Text = "Dgml package installed";
+            _package.Dte2.StatusBar.Text = DgmlLocale.PackageInstalled;
             var path = Path.GetTempFileName() + ".txt";
             File.WriteAllText(path, GetReadme(), Encoding.UTF8);
             var window = _package.Dte2.ItemOperations.OpenFile(path);

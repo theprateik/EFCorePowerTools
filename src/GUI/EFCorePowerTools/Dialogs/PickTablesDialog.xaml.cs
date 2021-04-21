@@ -1,165 +1,119 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows;
-using ErikEJ.SqlCeToolbox.Helpers;
-using Microsoft.Win32;
-
-namespace ErikEJ.SqlCeToolbox.Dialogs
+﻿namespace EFCorePowerTools.Dialogs
 {
-    public partial class PickTablesDialog
+    using Contracts.ViewModels;
+    using Contracts.Views;
+    using RevEng.Shared;
+    using Shared.DAL;
+    using System;
+    using System.Collections.Generic;
+    using System.Windows.Controls;
+    using System.Windows.Input;
+
+    public partial class PickTablesDialog : IPickTablesDialog
     {
-        public PickTablesDialog()
+        private readonly Func<SerializationTableModel[]> _getDialogResult;
+        private readonly Func<Schema[]> _getReplacerResult;
+        private readonly Action<IEnumerable<TableModel>, IEnumerable<Schema>> _addTables;
+        private readonly Action<IEnumerable<SerializationTableModel>> _selectTables;
+
+        public PickTablesDialog(ITelemetryAccess telemetryAccess,
+                                IPickTablesViewModel viewModel)
         {
-            Telemetry.TrackPageView(nameof(PickTablesDialog));
+            telemetryAccess.TrackPageView(nameof(PickTablesDialog));
+
+            DataContext = viewModel;
+            viewModel.CloseRequested += (sender, args) =>
+            {
+                DialogResult = args.DialogResult;
+                Close();
+            };
+            _getDialogResult = viewModel.GetSelectedObjects;
+            _getReplacerResult = viewModel.GetRenamedObjects;
+            _addTables = viewModel.AddObjects;
+            _selectTables = viewModel.SelectObjects;
+
             InitializeComponent();
-            Background = VsThemes.GetWindowBackground();
         }
 
-        public bool IncludeTables { get; set; }
-
-        private List<CheckListItem> items = new List<CheckListItem>();
-
-        public List<string> Tables { get; set; }
-
-        public List<string> SelectedTables { get; set; }
-
-        private void Window_Loaded(object sender, RoutedEventArgs e)
+        (bool ClosedByOK, PickTablesDialogResult Payload) IDialog<PickTablesDialogResult>.ShowAndAwaitUserResponse(bool modal)
         {
-            foreach (var table in Tables)
-            { 
-                var isChecked = !table.StartsWith("__");
-                isChecked = !table.StartsWith("dbo.__");
-                isChecked = !table.EndsWith(".sysdiagrams");
-                items.Add(new CheckListItem { IsChecked = isChecked, Label = table });                
-            }
-            chkTables.ItemsSource = items;
+            bool closedByOkay;
 
-            if (SelectedTables != null)
+            if (modal)
             {
-                SetChecked(SelectedTables.ToArray());
-            }
-        }
-
-        private void button1_Click(object sender, RoutedEventArgs e)
-        {
-            DialogResult = true;
-            Tables.Clear();
-            foreach (var item in items)
-            {
-                var checkItem = (CheckListItem)item;
-                if ((!checkItem.IsChecked && !IncludeTables) 
-                    || (checkItem.IsChecked && IncludeTables))
-                {
-                    Tables.Add(checkItem.Label);
-                }
-            }
-            Close();
-        }
-
-        private void button2_Click(object sender, RoutedEventArgs e)
-        {
-            Close();
-        }
-
-        private void chkClear_Click(object sender, RoutedEventArgs e)
-        {
-            if (chkClear.IsChecked != null && chkClear.IsChecked.Value)
-            {
-                foreach (var item in items)
-                {
-                    if (!item.IsChecked)
-                    {
-                        item.IsChecked = true;
-                    }
-                }
+                closedByOkay = ShowModal() == true;
             }
             else
             {
-                foreach (var item in items)
+                closedByOkay = ShowDialog() == true;
+            }
+
+            return (closedByOkay, new PickTablesDialogResult { Objects = _getDialogResult(), CustomReplacers = _getReplacerResult() });
+        }
+
+        IPickTablesDialog IPickTablesDialog.AddTables(IEnumerable<TableModel> tables, IEnumerable<Schema> customReplacers)
+        {
+            _addTables(tables, customReplacers);
+            return this;
+        }
+
+        IPickTablesDialog IPickTablesDialog.PreselectTables(IEnumerable<SerializationTableModel> tables)
+        {
+            _selectTables(tables);
+            return this;
+        }
+
+        private void CheckBox_Unchecked(object sender, System.Windows.RoutedEventArgs e)
+        {
+            var checkBox = sender as CheckBox;
+            
+            if (checkBox.IsChecked == false)
+            {
+                statusBar.Visibility = System.Windows.Visibility.Visible;
+            }
+        }
+
+        private void TreeTextRenamer_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Escape)
+            {
+                ((IObjectTreeEditableViewModel)((TextBox)sender).DataContext).CancelEditCommand.Execute(null);
+            }
+            else if (e.Key == Key.Return)
+            {
+                ((IObjectTreeEditableViewModel)((TextBox)sender).DataContext).ConfirmEditCommand.Execute(null);
+            }
+            e.Handled = true;
+        }
+
+        private void DialogWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+        {
+            bool isInEditMode = ((IPickTablesViewModel)tree.DataContext).ObjectTree.IsInEditMode;
+            if (isInEditMode)
+            {
+                e.Cancel = true;
+            }
+        }
+
+        private void tree_KeyUp(object sender, KeyEventArgs e)
+        {
+            if(e.Key == Key.F2)
+            {
+                if (tree.SelectedItem is IColumnInformationViewModel cvm && cvm.IsTableSelected)
                 {
-                    if (item.IsChecked)
-                    {
-                        item.IsChecked = false;
-                    }
+                    cvm.StartEditCommand.Execute(null);
+                }
+                else if (tree.SelectedItem is ITableInformationViewModel tvm)
+                {
+                    tvm.StartEditCommand.Execute(null);
                 }
             }
-            chkTables.ItemsSource = null;
-            chkTables.ItemsSource = items;
-
-            TxtSearchTable.Text = string.Empty;
-        }
-
-        private void BtnSaveSelection_OnClick(object sender, RoutedEventArgs e)
-        {
-            var tableList = string.Empty;
-            foreach (var item in items)
+            else if (e.Key == Key.Space)
             {
-                var checkItem = (CheckListItem)item;
-                if ((checkItem.IsChecked))
-                {
-                    tableList += checkItem.Label + Environment.NewLine;
-                }
+                var vm = (IObjectTreeSelectableViewModel)tree.SelectedItem;
+                vm.SetSelectedCommand.Execute(vm.IsSelected == null ? false : !vm.IsSelected);;
+                e.Handled = true;
             }
-
-            var sfd = new SaveFileDialog
-            {
-                Filter = "Text file (*.txt)|*.txt|All Files(*.*)|*.*",
-                ValidateNames = true,
-                Title = "Save list of tables as"
-            };
-            if (sfd.ShowDialog() != true) return;
-            File.WriteAllText(sfd.FileName, tableList, Encoding.UTF8);
-        }
-
-        private void BtnLoadSelection_OnClick(object sender, RoutedEventArgs e)
-        {
-            var ofd = new OpenFileDialog
-            {
-                Filter = "Text file (*.txt)|*.txt|All Files(*.*)|*.*",
-                CheckFileExists = true,
-                Multiselect = false,
-                Title = "Select list of tables to load"
-            };
-            if (ofd.ShowDialog() != true) return;
-
-            var lines = File.ReadAllLines(ofd.FileName);
-            SetChecked(lines);
-        }
-
-        private void SetChecked(string[] tables)
-        {
-            foreach (var item in items)
-            {
-                item.IsChecked = tables.Contains(item.Label);
-            }
-            chkTables.ItemsSource = null;
-            chkTables.ItemsSource = items;
-
-            TxtSearchTable.Text = string.Empty;
-        }
-
-        private async void TxtSearchTable_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
-        {
-            var search = TxtSearchTable.Text;
-
-            await Task.Delay(500); // Add a delay (like a debounce) so that not every character change triggers a search
-            if (search != TxtSearchTable.Text)
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(search))
-            {
-                chkTables.ItemsSource = items;
-                return;
-            }
-
-            var filteredItems = items.Where(x => x.Label.ToUpper().Contains(TxtSearchTable.Text.ToUpper())).ToList();
-            chkTables.ItemsSource = filteredItems;
         }
     }
 }

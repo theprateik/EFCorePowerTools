@@ -1,97 +1,130 @@
-﻿using System;
-using System.Windows;
-using System.Collections.Generic;
-using ErikEJ.SqlCeToolbox.Helpers;
-
-namespace ErikEJ.SqlCeToolbox.Dialogs
+﻿namespace EFCorePowerTools.Dialogs
 {
-    public partial class PickServerDatabaseDialog
+    using Contracts.ViewModels;
+    using Contracts.Views;
+    using RevEng.Shared;
+    using Shared.DAL;
+    using Shared.Models;
+    using System;
+    using System.Collections.Generic;
+    using System.Diagnostics;
+    using System.Linq;
+    using System.Windows;
+    using System.Windows.Documents;
+
+    public partial class PickServerDatabaseDialog : IPickServerDatabaseDialog
     {
-        public KeyValuePair<string, DatabaseInfo> SelectedDatabase { get; private set; }
+        private readonly Func<(DatabaseConnectionModel Connection, DatabaseDefinitionModel Definition, bool IncludeViews, bool FilterSchemas, SchemaInfo[] Schemas, string UiHint)> _getDialogResult;
+        private readonly Action<IEnumerable<DatabaseConnectionModel>> _addConnections;
+        private readonly Action<IEnumerable<DatabaseDefinitionModel>> _addDefinitions;
+        private readonly Action<IEnumerable<SchemaInfo>> _addSchemas;
+        private readonly Action<bool> _useEFCore5;
+        private readonly Action<string> _uiHint;
 
-        public string DacpacPath { get; private set; }
-
-        private readonly EFCorePowerTools.EFCorePowerToolsPackage _package;
-
-        public PickServerDatabaseDialog(Dictionary<string, DatabaseInfo> serverConnections, EFCorePowerTools.EFCorePowerToolsPackage package, Dictionary<string, string> dacpacList)
+        public PickServerDatabaseDialog(ITelemetryAccess telemetryAccess,
+                                        IPickServerDatabaseViewModel viewModel)
         {
-            _package = package;
-            Telemetry.TrackPageView(nameof(PickServerDatabaseDialog));
+            telemetryAccess.TrackPageView(nameof(PickServerDatabaseDialog));
+
+            DataContext = viewModel;
+            viewModel.CloseRequested += (sender, args) =>
+            {
+                DialogResult = args.DialogResult;
+                Close();
+            };
+            _getDialogResult = () => (viewModel.SelectedDatabaseConnection, viewModel.SelectedDatabaseDefinition, viewModel.IncludeViews, viewModel.FilterSchemas, viewModel.Schemas.ToArray(), viewModel.UiHint);
+            _addConnections = models =>
+            {
+                foreach (var model in models)
+                    viewModel.DatabaseConnections.Add(model);
+            };
+            _addDefinitions = models =>
+            {
+                foreach (var model in models)
+                    viewModel.DatabaseDefinitions.Add(model);
+            };
+            _addSchemas = models =>
+            {
+                viewModel.FilterSchemas = models.Any();
+                foreach (var model in models)
+                    viewModel.Schemas.Add(model);
+            };
+            _useEFCore5 = efCore5 =>
+            {
+                viewModel.IncludeViews = efCore5;
+            };
+
+            _uiHint = uiHint =>
+            {
+                viewModel.UiHint = uiHint;
+            };
+
             InitializeComponent();
-            Background = VsThemes.GetWindowBackground();
-            comboBox1.DisplayMemberPath = "Value.Caption";
-            comboBox1.ItemsSource = serverConnections;
-            comboBox2.DisplayMemberPath = "Key";
-            comboBox2.ItemsSource = dacpacList;
-            if (serverConnections.Count > 0)
-            {
-                comboBox1.SelectedIndex = 0;
-            }
-        }
-
-        private void SaveButton_Click(object sender, RoutedEventArgs e)
-        {
-            DialogResult = true;
-            Close();
-        }
-
-        private void CancelButton_Click(object sender, RoutedEventArgs e)
-        {
-            DialogResult = false;
-            Close();
-        }
-
-        private void comboBox1_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
-            if (comboBox1.SelectedItem != null)
-            {
-                SelectedDatabase = (KeyValuePair<string, DatabaseInfo>)comboBox1.SelectedItem;
-                DacpacPath = null;
-                comboBox2.SelectedIndex = -1;
-            };
-        }
-
-        private void comboBox2_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
-        {
-            if (comboBox2.SelectedItem != null)
-            {
-                var result = (KeyValuePair<string, string>)comboBox2.SelectedItem;
-                DacpacPath = result.Value;
-                comboBox1.SelectedIndex = -1;
-            };
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            comboBox1.Focus();
-        }
-
-        private void AddButton_OnClick(object sender, RoutedEventArgs e)
-        {
             try
             {
-                var info = EnvDteHelper.PromptForInfo(_package);
-                if (info.DatabaseType == DatabaseType.SQLCE35) return;
-
-                var databaseList = EnvDteHelper.GetDataConnections(_package);
-                comboBox1.DisplayMemberPath = "Value.Caption";
-                comboBox1.ItemsSource = databaseList;
-
-                int i = 0;
-                foreach (var item in databaseList)
-                {
-                    if (item.Key == info.ConnectionString)
-                    {
-                        comboBox1.SelectedIndex = i;
-                    }
-                    i++;
-                }
+                ReleaseNotesLink.Inlines.Add(new Run(typeof(EFCorePowerToolsPackage).Assembly.GetName().Version.ToString(3)));
             }
-            catch (Exception exception)
+            catch
             {
-                EnvDteHelper.ShowMessage("Unable to add connection, maybe the provider is not supported: "  + exception.Message);
+                // Ignore
             }
+            
+            DatabaseConnectionCombobox.Focus();
         }
 
+        public (bool ClosedByOK, (DatabaseConnectionModel Connection, DatabaseDefinitionModel Definition, bool IncludeViews, bool FilterSchemas, SchemaInfo[] Schemas, string UiHint) Payload) ShowAndAwaitUserResponse(bool modal)
+        {
+            bool closedByOkay;
+
+            if (modal)
+            {
+                closedByOkay = ShowModal() == true;
+            }
+            else
+            {
+                closedByOkay = ShowDialog() == true;
+            }
+
+            return (closedByOkay, _getDialogResult());
+        }
+
+        void IPickServerDatabaseDialog.PublishConnections(IEnumerable<DatabaseConnectionModel> connections)
+        {
+            _addConnections(connections);
+        }
+
+        void IPickServerDatabaseDialog.PublishDefinitions(IEnumerable<DatabaseDefinitionModel> definitions)
+        {
+            _addDefinitions(definitions);
+        }
+
+        public void PublishSchemas(IEnumerable<SchemaInfo> schemas)
+        {
+            _addSchemas(schemas);
+        }
+
+        public void PublishCodeGenerationMode(CodeGenerationMode codeGenerationMode)
+        {
+            _useEFCore5(codeGenerationMode == CodeGenerationMode.EFCore5);
+        }
+
+        public void PublishUiHint(string uiHint)
+        {
+            _uiHint(uiHint);
+        }
+
+        private void Hyperlink_Click(object sender, RoutedEventArgs e)
+        {
+            var hyperlink = sender as Hyperlink;
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo(hyperlink.NavigateUri.AbsoluteUri),
+            };
+            process.Start();
+        }
     }
 }
